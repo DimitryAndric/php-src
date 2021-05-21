@@ -150,9 +150,25 @@ static void cwd_globals_ctor(virtual_cwd_globals *cwd_g) /* {{{ */
 }
 /* }}} */
 
+static void realpath_cache_clean_helper(virtual_cwd_globals *cwd_g)
+{
+	uint32_t i;
+
+	for (i = 0; i < REALPATH_CACHE_MAX; i++) {
+		realpath_cache_bucket *p = cwd_g->realpath_cache[i];
+		while (p != NULL) {
+			realpath_cache_bucket *r = p;
+			p = p->next;
+			free(r);
+		}
+		cwd_g->realpath_cache[i] = NULL;
+	}
+	cwd_g->realpath_cache_size = 0;
+}
+
 static void cwd_globals_dtor(virtual_cwd_globals *cwd_g) /* {{{ */
 {
-	realpath_cache_clean();
+	realpath_cache_clean_helper(cwd_g);
 }
 /* }}} */
 
@@ -340,25 +356,14 @@ static inline zend_ulong realpath_cache_key(const char *path, size_t path_len) /
 
 CWD_API void realpath_cache_clean(void) /* {{{ */
 {
-	uint32_t i;
-
-	for (i = 0; i < sizeof(CWDG(realpath_cache))/sizeof(CWDG(realpath_cache)[0]); i++) {
-		realpath_cache_bucket *p = CWDG(realpath_cache)[i];
-		while (p != NULL) {
-			realpath_cache_bucket *r = p;
-			p = p->next;
-			free(r);
-		}
-		CWDG(realpath_cache)[i] = NULL;
-	}
-	CWDG(realpath_cache_size) = 0;
+	realpath_cache_clean_helper(CWDG_BULK);
 }
 /* }}} */
 
 CWD_API void realpath_cache_del(const char *path, size_t path_len) /* {{{ */
 {
 	zend_ulong key = realpath_cache_key(path, path_len);
-	zend_ulong n = key % (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
+	zend_ulong n = key % REALPATH_CACHE_MAX;
 	realpath_cache_bucket **bucket = &CWDG(realpath_cache)[n];
 
 	while (*bucket != NULL) {
@@ -421,7 +426,7 @@ static inline void realpath_cache_add(const char *path, size_t path_len, const c
 		bucket->is_writable = 0;
 #endif
 		bucket->expires = t + CWDG(realpath_cache_ttl);
-		n = bucket->key % (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
+		n = bucket->key % REALPATH_CACHE_MAX;
 		bucket->next = CWDG(realpath_cache)[n];
 		CWDG(realpath_cache)[n] = bucket;
 		CWDG(realpath_cache_size) += size;
@@ -432,7 +437,7 @@ static inline void realpath_cache_add(const char *path, size_t path_len, const c
 static inline realpath_cache_bucket* realpath_cache_find(const char *path, size_t path_len, time_t t) /* {{{ */
 {
 	zend_ulong key = realpath_cache_key(path, path_len);
-	zend_ulong n = key % (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
+	zend_ulong n = key % REALPATH_CACHE_MAX;
 	realpath_cache_bucket **bucket = &CWDG(realpath_cache)[n];
 
 	while (*bucket != NULL) {
@@ -471,7 +476,7 @@ CWD_API zend_long realpath_cache_size(void)
 
 CWD_API zend_long realpath_cache_max_buckets(void)
 {
-	return (sizeof(CWDG(realpath_cache)) / sizeof(CWDG(realpath_cache)[0]));
+	return REALPATH_CACHE_MAX;
 }
 
 CWD_API realpath_cache_bucket** realpath_cache_get_buckets(void)
